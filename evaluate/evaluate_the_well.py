@@ -17,7 +17,6 @@ if repo_root_str in sys.path:
 sys.path.insert(0, repo_root_str)
 
 import torch
-import torch.nn.functional as F
 from torch.utils.data import DataLoader, Dataset
 
 from model.model import ScOT
@@ -32,7 +31,7 @@ from model.problems.the_well import (
 class WellRolloutDataset(Dataset):
     def __init__(
         self, root, subset, history, rollout_steps, samples,
-        resolution_scale=1.0, first_target_time=1,
+        first_target_time=1,
     ):
         WellDataset, ZScoreNormalization = _well_imports()
         self.source = WellDataset(
@@ -57,11 +56,7 @@ class WellRolloutDataset(Dataset):
         self.samples = min(int(samples), len(self.source))
         self.subset = subset
         self.native_resolution = tuple(THE_WELL_NATIVE_RESOLUTIONS[subset])
-        self.resolution_scale = float(resolution_scale)
-        self.resolution = tuple(
-            max(1, int(round(value * self.resolution_scale)))
-            for value in self.native_resolution
-        )
+        self.resolution = self.native_resolution
         self.dynamic_channels = int(self.source.metadata.n_fields)
         self.constant_channels = int(self.source.metadata.n_constant_fields)
 
@@ -73,18 +68,15 @@ class WellRolloutDataset(Dataset):
         history = torch.nan_to_num(sample["input_fields"].float()).permute(0, 3, 1, 2)
         targets = torch.nan_to_num(sample["output_fields"].float()).permute(0, 3, 1, 2)
         history = history[-self.history :]
-        if history.shape[-2:] != self.resolution:
-            history = F.interpolate(history, size=self.resolution, mode="bilinear", align_corners=False)
-            targets = F.interpolate(targets, size=self.resolution, mode="bilinear", align_corners=False)
         constants = sample.get("constant_fields")
         if constants is not None and constants.numel() > 0:
             constants = torch.nan_to_num(constants.float()).permute(2, 0, 1).unsqueeze(0)
             constants = constants.squeeze(0)
             if constants.shape[-2:] != self.resolution:
-                constants = F.interpolate(
-                    constants.unsqueeze(0), size=self.resolution,
-                    mode="bilinear", align_corners=False,
-                ).squeeze(0)
+                raise ValueError(
+                    f"{self.subset} returned static fields with shape "
+                    f"{constants.shape[-2:]}; expected native grid {self.resolution}."
+                )
         else:
             constants = history.new_zeros((0, *self.resolution))
         if history.shape[-2:] != self.resolution or targets.shape[-2:] != self.resolution:
@@ -267,9 +259,6 @@ def parse_args():
     parser.add_argument("--batch_size", type=int, default=4)
     parser.add_argument("--num_workers", type=int, default=1)
     parser.add_argument("--device", default="cuda")
-    parser.add_argument(
-        "--resolution_scale", type=float, choices=(1.0, 0.5, 0.25), default=1.0
-    )
     parser.add_argument("--output", required=True)
     return parser.parse_args()
 
@@ -303,8 +292,7 @@ def main():
             "rollout_steps": args.rollout_steps,
             "metric": "relative_l1",
             "normalization": "The Well field-wise z-score",
-            "resolution": "scaled from each dataset's native grid",
-            "resolution_scale": args.resolution_scale,
+            "resolution": "each dataset's native grid",
             "sampling": "full test trajectories starting at t=0",
             "static_fields_during_rollout": "fixed",
             "rollout_aggregation": "mean over every predicted step and trajectory",
@@ -315,23 +303,19 @@ def main():
     }
     for subset in requested_subsets:
         native_resolution = tuple(THE_WELL_NATIVE_RESOLUTIONS[subset])
-        evaluation_resolution = tuple(
-            int(round(value * args.resolution_scale)) for value in native_resolution
-        )
         dataset = WellRolloutDataset(
             args.data_root,
             subset,
             history,
             args.rollout_steps,
             args.samples_per_dataset,
-            resolution_scale=args.resolution_scale,
             first_target_time=args.first_target_time,
         )
         results["datasets"][subset] = evaluate_subset(
             model, dataset, args.batch_size, args.num_workers, device
         )
         results["datasets"][subset]["native_resolution"] = list(native_resolution)
-        results["datasets"][subset]["evaluation_resolution"] = list(evaluation_resolution)
+        results["datasets"][subset]["evaluation_resolution"] = list(native_resolution)
         print(
             f"{subset}: dt1="
             f"{results['datasets'][subset]['dt1']['physical']['mean_relative_l1_percent']:.5f}% "

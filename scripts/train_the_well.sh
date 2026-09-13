@@ -8,16 +8,6 @@ MODEL_SIZE="${3:-L}"
 RUN_NAME="${4:-dreso_${SUBSET#well.}_${MODEL_SIZE}}"
 OUTPUT_ROOT="${OUTPUT_ROOT:-${REPO_ROOT}/checkpoint}"
 MASTER_PORT="${MASTER_PORT:-29501}"
-ABS_POS="${ABS_POS:-false}"
-
-case "${ABS_POS,,}" in
-  1|true|yes|on) ABS_POS=true ;;
-  0|false|no|off) ABS_POS=false ;;
-  *) echo "ABS_POS must be true or false; got ${ABS_POS}." >&2; exit 2 ;;
-esac
-if [[ "${ABS_POS}" == true && "${RUN_NAME}" != *abspos* ]]; then
-  RUN_NAME="${RUN_NAME}_abspos"
-fi
 
 export CUDA_VISIBLE_DEVICES="${CUDA_VISIBLE_DEVICES:-0}"
 export OMP_NUM_THREADS="${OMP_NUM_THREADS:-8}"
@@ -36,7 +26,6 @@ torchrun --master_addr=127.0.0.1 --master_port="${MASTER_PORT}" \
   --run_name "${RUN_NAME}" \
   --report_to tensorboard \
   --model_size "${MODEL_SIZE}" \
-  --use_absolute_embeddings "${ABS_POS}" \
   --num_trajectories "${NUM_SAMPLES:-2000}" \
   --num_epochs "${EPOCHS:-50}" \
   --batch_size "${BATCH_SIZE:-8}" \

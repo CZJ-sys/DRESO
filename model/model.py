@@ -677,7 +677,6 @@ class ScOTConfig(PretrainedConfig):
         attention_probs_dropout_prob=0.0,
         drop_path_rate=0.1,
         hidden_act="gelu",
-        use_absolute_embeddings=False,
         initializer_range=0.02,
         layer_norm_eps=1e-5,
         p=2,
@@ -712,7 +711,6 @@ class ScOTConfig(PretrainedConfig):
         self.attention_probs_dropout_prob = float(attention_probs_dropout_prob)
         self.drop_path_rate = float(drop_path_rate)
         self.hidden_act = hidden_act
-        self.use_absolute_embeddings = bool(use_absolute_embeddings)
         self.initializer_range = float(initializer_range)
         self.layer_norm_eps = float(layer_norm_eps)
         self.p = int(p)
@@ -926,12 +924,6 @@ class ScOTEmbeddings(nn.Module):
             if use_mask_token
             else None
         )
-        num_patches = self.patch_grid[0] * self.patch_grid[1]
-        self.position_embeddings = (
-            nn.Parameter(torch.zeros(1, num_patches, config.embed_dim))
-            if config.use_absolute_embeddings
-            else None
-        )
 
         self.norm = build_operator_norm(config, config.embed_dim)
         self.dropout = nn.Dropout(config.hidden_dropout_prob)
@@ -950,22 +942,6 @@ class ScOTEmbeddings(nn.Module):
             mask_tokens = self.mask_token.expand(batch_size, seq_len, -1)
             mask = bool_masked_pos.unsqueeze(-1).type_as(mask_tokens)
             embeddings = embeddings * (1.0 - mask) + mask_tokens * mask
-
-        if self.position_embeddings is not None:
-            position_embeddings = self.position_embeddings
-            if position_embeddings.shape[1] != seq_len:
-                train_h, train_w = self.patch_grid
-                out_h, out_w = output_dimensions
-                position_embeddings = position_embeddings.reshape(
-                    1, train_h, train_w, -1
-                ).permute(0, 3, 1, 2)
-                position_embeddings = nn.functional.interpolate(
-                    position_embeddings,
-                    size=(out_h, out_w),
-                    mode="bilinear",
-                    align_corners=False,
-                ).permute(0, 2, 3, 1).reshape(1, seq_len, -1)
-            embeddings = embeddings + position_embeddings
 
         embeddings = self.dropout(embeddings)
 

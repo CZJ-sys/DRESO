@@ -23,5 +23,4 @@ python "${REPO_ROOT}/evaluate/evaluate_the_well.py" \
   --samples_per_dataset "${SAMPLES:-200}" \
   --batch_size "${BATCH_SIZE:-4}" \
   --num_workers "${NUM_WORKERS:-1}" \
-  --resolution_scale "${RESOLUTION_SCALE:-1}" \
   --output "${OUTPUT}"

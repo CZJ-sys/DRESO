@@ -6,19 +6,6 @@ import os
 import torch
 
 
-def _str_to_bool(value):
-    if isinstance(value, bool):
-        return value
-    normalized = str(value).strip().lower()
-    if normalized in {"1", "true", "yes", "on"}:
-        return True
-    if normalized in {"0", "false", "no", "off"}:
-        return False
-    raise argparse.ArgumentTypeError(
-        f"Expected a boolean value, got {value!r}."
-    )
-
-
 def _require_cuda_training():
     local_rank = int(os.environ.get("LOCAL_RANK", "0"))
     accelerate_use_cpu = os.environ.get("ACCELERATE_USE_CPU", "").strip().lower()
@@ -204,15 +191,6 @@ if __name__ == "__main__":
     parser.add_argument("--lr", type=float, default=None)
     parser.add_argument("--warmup_ratio", type=float, default=None)
     parser.add_argument(
-        "--use_absolute_embeddings",
-        type=_str_to_bool,
-        default=None,
-        help=(
-            "Enable a learned absolute position embedding on the patch grid. "
-            "Defaults to use_absolute_embeddings in the YAML, or false."
-        ),
-    )
-    parser.add_argument(
         "--datasets",
         nargs="+",
         default=None,
@@ -292,12 +270,6 @@ if __name__ == "__main__":
     spectral_gate_prior_weight = float(
         config.get("spectral_gate_prior_weight", 1.0)
     )
-    use_absolute_embeddings = bool(
-        config.get("use_absolute_embeddings", False)
-        if params.use_absolute_embeddings is None
-        else params.use_absolute_embeddings
-    )
-    config["use_absolute_embeddings"] = use_absolute_embeddings
     use_hf_loss = bool(config.get("use_hf_loss", True))
     hf_loss_lambda = float(config.get("hf_loss_lambda", 0.3))
     hf_loss_alpha = float(config.get("hf_loss_alpha", 1.5))
@@ -354,7 +326,6 @@ if __name__ == "__main__":
             attention_probs_dropout_prob=0.0,  # default
             drop_path_rate=0.0,
             hidden_act="gelu",
-            use_absolute_embeddings=use_absolute_embeddings,
             initializer_range=0.02,
             layer_norm_eps=1e-5,
             p=1,
@@ -433,13 +404,6 @@ if __name__ == "__main__":
         },
         "input": {
             "frames": 1,
-            "absolute_position_embeddings": use_absolute_embeddings,
-            "position_embedding_domain": "patch_grid",
-            "cross_resolution_policy": (
-                "bilinear_interpolation"
-                if use_absolute_embeddings
-                else "not_applicable"
-            ),
         },
         "spectral_operator": {
             "partition": "learnable_gaussian_dual_region",
@@ -525,7 +489,6 @@ if __name__ == "__main__":
             "Architecture audit: "
             f"model={config['model_name']}, depths={config['depths']}, "
             "input_frames=1, operator_norm=layer, "
-            f"absolute_position_embeddings={use_absolute_embeddings}, "
             f"spectral_blocks={len(spectral_blocks)}, "
             "partition=learnable_gaussian, mode_support=all, "
             "spectral_gate_design=normalized_10d_signal_evidence, "

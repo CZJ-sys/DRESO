@@ -2,14 +2,15 @@
 
 **DRESO: Evidence-Guided Dual-Region Spectral Operators for Long-Horizon PDE Forecasting**
 
-本仓库是 DRESO 的 clean 复现版本，只包含模型本身、Poseidon 与 The Well
-训练/评测入口，以及门控特征和可学习 cutoff 的诊断可视化。训练协议固定为
-单帧输入。仓库仅保留公开复现所需的基础训练、评测和诊断入口。
+This repository is the clean reproduction version of DRESO. It includes the
+model, training and evaluation on Poseidon and The Well, and diagnostic
+visualizations of gate features and learned filter cutoffs. All training uses
+single-frame inputs.
 
-## 环境
+## Environment
 
-推荐 Linux、Python 3.10、NVIDIA GPU。环境文件只由 Conda 创建基础 Python
-环境，其余依赖通过 pip 安装：
+Linux, Python 3.10, and an NVIDIA GPU are recommended. Conda creates the base
+Python environment; all remaining dependencies are installed with pip:
 
 ```bash
 source /path/to/miniconda3/etc/profile.d/conda.sh
@@ -17,15 +18,17 @@ bash scripts/setup_environment.sh
 conda activate dreso
 ```
 
-`setup_environment.sh` 安装 PyTorch 2.0.1 + CUDA 11.8，并以 `--no-deps`
-方式安装 The Well，避免其覆盖已验证的 NumPy、h5py 与 PyTorch 版本。
+The setup script installs PyTorch 2.0.1 with CUDA 11.8. The Well is installed
+with `--no-deps` to prevent it from replacing the verified NumPy, h5py, and
+PyTorch versions.
 
-## 数据
+## Data
 
-Poseidon 根目录应直接包含 `NS-Gauss.nc`、`CE-RP.nc`、`CE-CRP.nc`、
-`CE-Gauss.nc`、`NS-Sines.nc` 和 `CE-KH.nc`。
+The Poseidon root directory should directly contain `NS-Gauss.nc`, `CE-RP.nc`,
+`CE-CRP.nc`, `CE-Gauss.nc`, `NS-Sines.nc`, and `CE-KH.nc`.
 
-The Well 根目录支持以下四个 Hugging Face 原始子目录，无需预转换：
+The Well loader supports these four original Hugging Face dataset directories
+without preprocessing:
 
 ```text
 acoustic_scattering_discontinuous/
@@ -34,41 +37,33 @@ gray_scott/
 planetswe/
 ```
 
-每个 The Well 子集必须包含官方的 `data/train`、`data/valid` 和 `data/test`
-结构。一个 checkpoint 只训练一个子集，避免不同物理量被填充到同一通道。
+Each dataset must contain the official `data/train`, `data/valid`, and
+`data/test` splits. Train a separate model from scratch for each The Well
+dataset because their channel semantics differ.
 
-## Poseidon 训练
+## Poseidon Training
 
-默认训练六个子集、每个子集 200 条轨迹、200 epoch。模型规模可选
-`Tiny`、`Big` 或 `L`：
+The default configuration trains jointly on the six datasets, using 200
+trajectories per dataset for 200 epochs. Choose `Tiny`, `Big`, or `L`:
 
 ```bash
 CUDA_VISIBLE_DEVICES=0 \
 bash scripts/train_poseidon.sh /path/to/Poseiden L dreso_poseidon_l
 ```
 
-重新训练带可学习绝对位置编码的 DRESO 时设置 `ABS_POS=true`：
-
-```bash
-ABS_POS=true CUDA_VISIBLE_DEVICES=0 \
-bash scripts/train_poseidon.sh /data1_hdd/chenzhengjie/Poseiden L dreso_poseidon_l
-```
-
-位置表定义在 patch grid 上，并随模型一起训练；脚本会自动给 run name 添加
-`_abspos`，因此不会覆盖默认无位置编码的 checkpoint。也可绕过脚本直接向
-`train/train.py` 传入 `--use_absolute_embeddings true`。
-
-配置位于 `configs/train_poseidon.yaml`。checkpoint 默认保存至：
+Training settings are defined in `configs/train_poseidon.yaml`. The default
+checkpoint directory for this command is:
 
 ```text
 checkpoint/dreso_poseidon/dreso_poseidon_l/
 ```
 
-## Poseidon 评测
+## Poseidon Evaluation
 
-评测固定使用 `t=0` 单帧输入，汇报 `t=1` 的 dt1，以及 `t=1..20`
-完全自回归 rollout 的时间与轨迹联合均值。JSON 同时保存 normalized 与
-physical ReL1：
+Evaluation starts from a single state at `t=0`. It reports dt1 at `t=1` and
+the fully autoregressive rollout mean over `t=1..20`, averaged across all
+predicted steps and trajectories. JSON results include both normalized and
+physical relative L1 errors:
 
 ```bash
 CUDA_VISIBLE_DEVICES=0 \
@@ -77,20 +72,25 @@ bash scripts/evaluate_poseidon.sh \
   /path/to/Poseiden
 ```
 
-设置 `SAMPLES=-1` 可使用完整测试集。
+Set `SAMPLES=-1` to evaluate the complete test split.
 
-## The Well 训练
+## The Well Training
 
-默认从指定子集的训练窗口中均匀有放回抽取 2000 个相邻帧样本对，训练
-50 epoch。数据保持原生空间网格：acoustic 与 active matter 为 `256x256`，
-Gray-Scott 为 `128x128`，PlanetsWE 为 `256x512`：
+By default, training samples 2,000 adjacent-frame pairs uniformly with
+replacement from the selected dataset's training windows and runs for 50
+epochs. Training and evaluation retain the native spatial grid:
 
-正常评测同样严格使用各子集原生分辨率，不再执行 `128x128` resize；checkpoint
-必须来自同一子集、同一原生网格的训练。
+| Dataset | Resolution |
+| --- | --- |
+| Acoustic scattering | 256 x 256 |
+| Active matter | 256 x 256 |
+| Gray-Scott | 128 x 128 |
+| PlanetsWE | 256 x 512 |
 
-训练每个 epoch 进行验证，并以 `eval_loss` 最小的 epoch 作为最佳 checkpoint。
-启用 HF loss 时，该指标为包含 base normalized ReL1 与 HF loss 的验证总损失；
-训练结束后，运行目录根部保存的是重新载入的最佳 checkpoint，而不是最后一个 epoch。
+Validation runs every epoch. The best checkpoint is selected by minimum
+`eval_loss`. When HF loss is enabled, this is the total validation loss,
+including base normalized relative L1 and HF loss. The final model exported
+to the run directory is the reloaded best checkpoint, not the last epoch.
 
 ```bash
 CUDA_VISIBLE_DEVICES=0 \
@@ -98,18 +98,7 @@ bash scripts/train_the_well.sh \
   "/path/to/The Well" well.active_matter L
 ```
 
-带绝对位置编码的 The Well 独立训练命令为：
-
-```bash
-ABS_POS=true EPOCHS=50 NUM_SAMPLES=2000 CUDA_VISIBLE_DEVICES=0 \
-bash scripts/train_the_well.sh \
-  /data1_hdd/chenzhengjie/Well well.active_matter L
-```
-
-四个子集仍须分别从头训练。若跨分辨率评测，学习到的 patch-grid 位置表会以
-双线性插值适配目标网格；该结果应作为跨分辨率压力测试单独汇报。
-
-可选子集：
+Supported dataset identifiers:
 
 ```text
 well.acoustic_discontinuous
@@ -118,14 +107,17 @@ well.gray_scott
 well.planetswe
 ```
 
-可通过环境变量覆盖基础训练资源，例如：
+Settings are defined in `configs/train_the_well.yaml`. Override training
+resources through environment variables, for example:
 
 ```bash
 EPOCHS=50 NUM_SAMPLES=2000 BATCH_SIZE=8 GRAD_ACCUM=1 \
 bash scripts/train_the_well.sh "/path/to/The Well" well.gray_scott Big
 ```
 
-## The Well 评测
+## The Well Evaluation
+
+Evaluate a checkpoint on the dataset and native grid used for training:
 
 ```bash
 CUDA_VISIBLE_DEVICES=0 \
@@ -134,24 +126,12 @@ bash scripts/evaluate_the_well.sh \
   "/path/to/The Well" well.active_matter
 ```
 
-输出包含 normalized 与 physical ReL1 的 dt1 和 rollout 均值。
+Results include normalized and physical relative L1 means for dt1 and
+autoregressive rollout. No spatial resizing is performed.
 
-同一个当前 checkpoint 可直接在逐边缩小到 50% 或 25% 的网格上测试：
+## Visualizations
 
-```bash
-RESOLUTION_SCALE=0.5 CUDA_VISIBLE_DEVICES=0 \
-bash scripts/evaluate_the_well.sh \
-  checkpoint/dreso_the_well/dreso_active_matter_L \
-  "/path/to/The Well" well.active_matter
-```
-
-`RESOLUTION_SCALE` 可取 `1`、`0.5`、`0.25`。评测器会同步缩放输入、静态场和
-GT，整个 autoregressive rollout 都留在目标网格，不会 resize 回训练分辨率。
-该结果属于跨分辨率压力测试，应与原生分辨率主结果分开汇报。
-
-## 可视化
-
-查看一个 checkpoint 内各频域 Block 学到的 cutoff 分布：
+Inspect the learned cutoff distribution across spectral blocks:
 
 ```bash
 python evaluate/analyze_cutoff_distribution.py \
@@ -159,7 +139,8 @@ python evaluate/analyze_cutoff_distribution.py \
   --output diagnostics/cutoff_distribution
 ```
 
-查看十维门控描述符的实际响应；默认只收集门控特征，不执行额外因果掩蔽：
+Inspect the ten gate descriptors. By default, this collects feature responses
+without additional causal masking evaluations:
 
 ```bash
 python evaluate/analyze_gate_feature_importance.py \
@@ -170,7 +151,7 @@ python evaluate/analyze_gate_feature_importance.py \
   --output_dir diagnostics/gate_features
 ```
 
-分析某条 Poseidon 物理轨迹上的十维低/高频描述符：
+Analyze low- and high-frequency descriptors along a physical PDE trajectory:
 
 ```bash
 python evaluate/analyze_ce_rm_gate_trajectory.py \
@@ -182,10 +163,13 @@ python evaluate/analyze_ce_rm_gate_trajectory.py \
   --save_vector
 ```
 
-## 说明
+## Notes
 
-- 训练强制使用 CUDA，不会在 GPU 不可用时静默回退到 CPU。
-- Poseidon 的不可压缩 NS 只监督和评测速度通道 `[u,v]`；人工密度与压力
-  通道在 rollout 中保持常量。
-- The Well 使用官方字段级 z-score，并在 rollout 中固定静态场。
-- `ScOT` 类名仅用于兼容已有 Hugging Face checkpoint 的序列化格式。
+- Training requires CUDA and never silently falls back to CPU.
+- Poseidon incompressible NS tasks supervise and evaluate only velocity
+  channels `[u, v]`. Artificial density and pressure channels remain constant
+  during rollout.
+- The Well uses official field-wise z-score normalization and keeps static
+  fields fixed during rollout.
+- The `ScOT` class name is retained for compatibility with existing Hugging
+  Face checkpoint serialization.
